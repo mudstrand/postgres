@@ -5,9 +5,13 @@ services:
         restart: unless-stopped
         ports:
             - "6379:6379"
-        # No volumes; data disappears when the container is removed
+        networks: [appnet]
         healthcheck:
             test: ["CMD", "redis-cli", "ping"]
             interval: 10s
             timeout: 5s
             retries: 5
+
+networks:
+    appnet:
+        external: true

@@ -1,0 +1,5 @@
+docker network create appnet
+
+and to verify
+
+docker network ls | grep appnet
