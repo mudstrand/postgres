@@ -1,0 +1,6 @@
+pg_dump -Fc -h localhost -p 5432 -U quote -d quote -f snapshots/quote_2025-12-05_103000.dump
+
+# optionally create a alternate database for the restore
+createdb -h localhost -p 5432 -U postgres -O quote quote_test
+
+pg_restore -h localhost -p 5432 -U quote -d quote_test -c snapshots/quote_2025-12-05_103000.dump
