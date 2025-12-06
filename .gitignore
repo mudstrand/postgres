@@ -2,6 +2,6 @@ pg_database/
 pg_backups/
 dumps/
 delete/
-snapshots/snapshots/
+snapshots/
 .idea/
 
