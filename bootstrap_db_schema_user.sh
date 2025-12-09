@@ -13,7 +13,6 @@ PGPASSWORD="$4"
 VALUE="$5"
 export PGHOST PGPORT PGUSER PGPASSWORD
 
-# Validate identifier
 if [[ ! "$VALUE" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
     echo "Error: <value> must be a valid SQL identifier (letters/digits/_ and not starting with a digit)."
     exit 2
@@ -24,86 +23,49 @@ PW="$VALUE"
 
 PSQLOPTS="-v ON_ERROR_STOP=1 -X -q"
 
-# 1) Create or alter role
-psql $PSQLOPTS -d postgres \
-    --set=val="$VALUE" \
-    --set=pw="$PW" <<'SQL'
-DO $do$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_setting('psql.val')) THEN
-        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L',
-                       current_setting('psql.val'),
-                       current_setting('psql.pw'));
-    ELSE
-        EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L',
-                       current_setting('psql.val'),
-                       current_setting('psql.pw'));
-    END IF;
-END
-$do$;
+# 1) Role: create if not exists (supported in PG 9.6+), then ensure LOGIN + password
+# If your server is older than 9.6, the CREATE ROLE IF NOT EXISTS will fail; the || true will swallow only that failure.
+psql $PSQLOPTS -d postgres <<SQL || true
+CREATE ROLE "$VALUE";
 SQL
 
-# 2) Create database owned by the role
-psql $PSQLOPTS -d postgres --set=val="$VALUE" <<'SQL'
-DO $do$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = current_setting('psql.val')) THEN
-        EXECUTE format('CREATE DATABASE %I OWNER %I',
-                       current_setting('psql.val'),
-                       current_setting('psql.val'));
-    ELSE
-        EXECUTE format('ALTER DATABASE %I OWNER TO %I',
-                       current_setting('psql.val'),
-                       current_setting('psql.val'));
-    END IF;
-END
-$do$;
+# Ensure LOGIN + password and membership
+psql $PSQLOPTS -d postgres <<SQL
+ALTER ROLE "$VALUE" LOGIN PASSWORD '$PW';
 SQL
 
-# 3) Inside that database: create schema + grants + defaults
-psql $PSQLOPTS -d "$DB" --set=val="$VALUE" --set=pw="$PW" <<'SQL'
-DO $do$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.schemata
-        WHERE schema_name = current_setting('psql.val')
-    ) THEN
-        EXECUTE format('CREATE SCHEMA %I AUTHORIZATION %I',
-                       current_setting('psql.val'),
-                       current_setting('psql.val'));
-    ELSE
-        EXECUTE format('ALTER SCHEMA %I OWNER TO %I',
-                       current_setting('psql.val'),
-                       current_setting('psql.val'));
-    END IF;
+# 2) Database: create if not exists, then ensure owner
+psql $PSQLOPTS -d postgres <<SQL || true
+CREATE DATABASE "$DB" OWNER "$VALUE";
+SQL
 
-    EXECUTE format('GRANT USAGE, CREATE ON SCHEMA %I TO %I',
-                   current_setting('psql.val'),
-                   current_setting('psql.val'));
+psql $PSQLOPTS -d postgres <<SQL
+ALTER DATABASE "$DB" OWNER TO "$VALUE";
+SQL
 
-    EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA %I TO %I',
-                   current_setting('psql.val'),
-                   current_setting('psql.val'));
-    EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I TO %I',
-                   current_setting('psql.val'),
-                   current_setting('psql.val'));
-    EXECUTE format('GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA %I TO %I',
-                   current_setting('psql.val'),
-                   current_setting('psql.val'));
-END
-$do$;
+# 3) Schema + grants + default privileges in the target DB
+# Create schema; ignore error if exists, then ensure owner
+psql $PSQLOPTS -d "$DB" <<SQL || true
+CREATE SCHEMA "$VALUE" AUTHORIZATION "$VALUE";
+SQL
 
--- Set default privileges as the schema owner
-\set ON_ERROR_STOP on
-SET ROLE :val;
-ALTER DEFAULT PRIVILEGES IN SCHEMA :val GRANT ALL ON TABLES    TO :val;
-ALTER DEFAULT PRIVILEGES IN SCHEMA :val GRANT ALL ON SEQUENCES TO :val;
-ALTER DEFAULT PRIVILEGES IN SCHEMA :val GRANT ALL ON FUNCTIONS TO :val;
+psql $PSQLOPTS -d "$DB" <<SQL
+ALTER SCHEMA "$VALUE" OWNER TO "$VALUE";
+
+GRANT USAGE, CREATE ON SCHEMA "$VALUE" TO "$VALUE";
+GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA "$VALUE" TO "$VALUE";
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "$VALUE" TO "$VALUE";
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA "$VALUE" TO "$VALUE";
+
+SET ROLE "$VALUE";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "$VALUE" GRANT ALL ON TABLES    TO "$VALUE";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "$VALUE" GRANT ALL ON SEQUENCES TO "$VALUE";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "$VALUE" GRANT ALL ON FUNCTIONS TO "$VALUE";
 RESET ROLE;
 SQL
 
 echo "Done.
--  Database: $DB
--  Role/User: $VALUE (password: $PW)
--  Schema: $VALUE (owned by $VALUE)
+-    Database: $DB
+-    Role/User: $VALUE (password: $PW)
+-    Schema: $VALUE (owned by $VALUE)
 "
